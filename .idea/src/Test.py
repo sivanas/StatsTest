@@ -1,14 +1,10 @@
 import pandas as pd
-import datetime as dt
-from matplotlib.backends.backend_pdf import PdfPages
-from scipy import stats
-import numpy as np
-from numpy import linspace
-import matplotlib
-from matplotlib import pyplot as plt
 import seaborn as sns
 from enum import Enum
-
+from matplotlib import pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+from scipy import stats
+import logging
 
 class OutputType(Enum):
     PDF = '/Users/sivan.as/Downloads/prodtestats.pdf'
@@ -66,10 +62,14 @@ COLUMN_NAMES = [
 
 # Main
 def main():
+    print("Setting up plot configuration")
     plot_config()
+    print("Reading input file from path: {}".format(CSV_INPUT_FILE_PATH))
     csv_file = pd.read_csv(CSV_INPUT_FILE_PATH, skip_blank_lines=True)
+    print("Parsing control and test group data by adserver_host")
     control_group = csv_file.loc[csv_file['adserver_host'].isin(TEST_SERVERS) == False]
     test_group = csv_file.loc[csv_file['adserver_host'].isin(TEST_SERVERS)]
+    print("Generating {} report".format(OUTPUT_TYPE))
     generate_report(control_group, test_group, OUTPUT_TYPE)
 
 
@@ -89,7 +89,7 @@ def is_normal_distribution(data):
 
 # Run a stats test according to the distribution of the data
 def do_test(control_data, test_data, is_normal_distribution):
-    report_text = "Distribution:"
+    report_text = "Distribution: "
     if (is_normal_distribution):
         report_text += "The data is normally distributed \nRunning Test: T-Test\n"
         test_res, test_pval = stats.ttest_ind(control_data, test_data, axis=0, equal_var=False)
@@ -97,13 +97,15 @@ def do_test(control_data, test_data, is_normal_distribution):
         report_text += "The data is NOT normally distributed \nRunning Test: Mann-Whitney U Test\n"
         test_res, test_pval = stats.mannwhitneyu(control_data, test_data)
 
-    report_text += "Test Results: "
+    report_text += "Test Status: "
 
     is_significant_diff = test_pval < NORMAL_P_VALUE
     if (is_significant_diff):
         report_text += "The difference is significant with p-value {}".format(test_pval)
     else:
         report_text += "All Good!"
+
+    report_text += "\nDetails: \nControl:\n{}\nTest:\n{}".format(control_data.describe(), test_data.describe())
 
     return report_text
 
@@ -117,10 +119,11 @@ def create_distribution_plot(pdf, column_name, control_data, test_data):
     save_curr_figure_and_close(pdf)
 
 
-def create_time_plot(pdf, column_name, data):
-    adserver_data = pd.DataFrame(data=data).groupby(['tslice', 'adserver_host']).agg(column_name)
-    adserver_data.sum().unstack().plot()
-    plt.title(column_name + " Per AdServer")
+def create_time_plot(pdf, column_name, group_name, data):
+    #time = pd.to_datetime(data['tslice'])
+    adserver_data = pd.DataFrame(data=data).groupby(['tslice', 'adserver_host'])
+    plot = adserver_data.agg(column_name).sum().unstack().plot()
+    plt.title("{} Per AdServer ({})".format(column_name, group_name))
     plt.xlabel("Time")
     plt.ylabel(column_name)
     save_curr_figure_and_close(pdf)
@@ -145,8 +148,8 @@ def save_curr_figure_and_close(pdf):
 
 # Add report text to current pdf figure
 def add_report_text(pdf, column_name, text):
-    plt.gcf().text(0.05, 0.8, "Evaluating {} \n".format(column_name), transform=plt.gcf().transFigure, size=18)
-    plt.gcf().text(0.05, 0.7, text, transform=plt.gcf().transFigure)
+    plt.gcf().text(0.05, 0.83, "Evaluating {} \n".format(column_name), transform=plt.gcf().transFigure, size=18)
+    plt.gcf().text(0.05, 0.1, text, transform=plt.gcf().transFigure)
     save_curr_figure_and_close(pdf)
 
 
@@ -160,22 +163,27 @@ def generate_pdf_report(control_group, test_group):
 
         # Loop through the columns and test each
         for column_name in COLUMN_NAMES:
-
-            create_time_plot(pdf, column_name, control_group)
-            create_time_plot(pdf, column_name, test_group)
+            print("Creating AdServer activity plot for {}".format(column_name))
+            create_time_plot(pdf, column_name, "Control", control_group)
+            create_time_plot(pdf, column_name, "Test", test_group)
 
             control_data = control_group[column_name]
             test_data = test_group[column_name]
 
             # print "Control: \n {} \n Test: \n {} \n ".format(control_data, test_data)
 
+            print("Checking distribution type for {}".format(column_name))
             is_norm = is_normal_distribution(control_data) and is_normal_distribution(test_data)
             report_text = do_test(control_data, test_data, is_norm)
 
-            add_report_text(pdf, column_name, report_text)
+            print("Creating distribution plot for {}".format(column_name))
             create_distribution_plot(pdf, column_name, control_data, test_data)
+            add_report_text(pdf, column_name, report_text)
+            print("Creating box plot for {}".format(column_name))
             create_boxplot(pdf, column_name, control_data, test_data)
+            print('\n ================== \n')
 
+    print("Finished.")
 
 # Generate the A/B test report in HTML format
 def generate_html_report(control_group, test_group):
