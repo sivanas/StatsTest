@@ -1,0 +1,19 @@
+[design]
+seaborn_style = whitegrid
+seaborn_palette = Set2
+
+[data]
+# full path to input file
+input_file_path = /Users/sivan.as/Downloads/3ccf5ebf-d2c2-4f7b-ba0c-58b7feb2893d.csv
+
+# pdf or html
+output_type = pdf
+
+# report output directory
+output_dir = /Users/sivan.as/Downloads/
+
+# prodtest name - will be also set as the file name
+prodtest_name = prodtest-ssp-1234
+
+# list of test servers
+test_servers = i-0ce10dc8209c58a28,i-0ddf0976483394643,i-0828061826d38ad8d,i-04ec2dc0f13cc8be8,i-09f4bb20b2ccf8566,i-042388cecaa737d56,i-08be6e52c201af9f6,i-0dd7d0ddcae6be9a4,i-0b8357dea675a2cd1,i-058d261d921da4b02
