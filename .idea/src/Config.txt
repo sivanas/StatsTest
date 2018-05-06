@@ -9,6 +9,9 @@ input_file_path = /Users/sivan.as/Downloads/3ccf5ebf-d2c2-4f7b-ba0c-58b7feb2893d
 # pdf or html
 output_type = pdf
 
+# enable report per instance 1/0 (report generation might take more time)
+enable_instance_report = 0
+
 # report output directory
 output_dir = /Users/sivan.as/Downloads/
 
