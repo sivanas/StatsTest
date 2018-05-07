@@ -2,7 +2,7 @@ import ConfigParser
 import os
 import pandas as pd
 import seaborn as sns
-from matplotlib import pyplot as plt
+import matplotlib.pyplot as plt, mpld3
 from matplotlib.backends.backend_pdf import PdfPages
 from scipy import stats
 import logging
@@ -48,7 +48,7 @@ def main():
     plot_config()
 
     generate_report(csv_file, control_group, test_group)
-
+    logger.info("Finished.")
 
 # Create design configuration for seaborn plot
 def plot_config():
@@ -86,8 +86,20 @@ def do_test(control_data, test_data, is_normal_distribution):
     return is_ok, report_text
 
 
+# Create a plot with the behaviour or each instance
+def create_instance_behaviour_plot(column_name, group_name, data):
+    fig, ax = plt.subplots()
+    adserver_data = pd.DataFrame(data=data).groupby(['tslice', 'adserver_host'])
+    adserver_data.agg(column_name).sum().unstack().plot(ax=ax)
+    plt.title("{} Instances Activity for {}".format(group_name, column_name))
+    plt.xlabel("Time")
+    plt.ylabel(column_name)
+    plt.close()
+    return fig
+
+
 # Create a distribution plot from data
-def create_distribution_plot(pdf, column_name, control_data, test_data):
+def create_distribution_plot(column_name, control_data, test_data):
     fig, ax = plt.subplots()
     sns.distplot(control_data, label=CONTROL)
     sns.distplot(test_data, label=TEST)
@@ -96,19 +108,9 @@ def create_distribution_plot(pdf, column_name, control_data, test_data):
     plt.close()
     return fig
 
-# Create a plot with the behaviour or each instance
-def create_instance_behaviour_plot(pdf, column_name, group_name, data):
-    fig, ax = plt.subplots()
-    adserver_data = pd.DataFrame(data=data).groupby(['tslice', 'adserver_host'])
-    adserver_data.agg(column_name).sum().unstack().plot(ax=ax)
-    plt.title("{} Per Test Instance ({})".format(column_name, group_name))
-    plt.xlabel("Time")
-    plt.ylabel(column_name)
-    plt.close()
-    return fig
 
 # Create a box plot from data
-def create_boxplot(pdf, column_name, control_data, test_data):
+def create_boxplot(column_name, control_data, test_data):
     boxplot_data = pd.DataFrame({
         CONTROL : control_data,
         TEST : test_data
@@ -121,90 +123,113 @@ def create_boxplot(pdf, column_name, control_data, test_data):
     return fig
 
 # Create figure with report text to current pdf figure
-def create_report_text(pdf, column_name, text):
+def create_report_text(column_name, text):
     fig, ax = plt.subplots()
     plt.grid(False)
     plt.axis('off')
-    fig.text(0.5, 0.85, "Evaluating {} \n".format(column_name), size=18, ha="center")
-    fig.text(0.05, 0.05, text)
+    fig.text(0.5, 0.85, "Evaluating {}".format(column_name), size=18, ha="center")
+    fig.text(0.05, 0.1, text, size=10)
     plt.close()
     return fig
 
 
 # Create figure with report summary
-def create_report_summary(pdf, prodtest_name, summary) :
+def create_report_summary(prodtest_name, summary) :
     fig, ax = plt.subplots()
+    #plt.subplots_adjust(left=0.2)
     plt.grid(False)
     plt.axis('off')
-    fig.text(0.5, 0.85, prodtest_name, transform=fig.transFigure,
-                    size=24, ha="center")
+    fig.text(0.5, 0.85, prodtest_name+"\n", size=24, ha="center")
+    fig.text(0.05, 0.8, "Summary:", size=14)
     summary_text = "\n"
     for column in summary:
         summary_text += column + " : " + summary[column] + "\n"
-    fig.text(0.05, 0.05, summary_text)
+    fig.text(0.05, 0.1, summary_text, size=10)
     plt.close()
     return fig
 
-# Generate the A/B test report in PDF format
-def generate_pdf_report(csv_file, prodtest_name, output_file, control_group, test_group):
-    figures = list()
+# Generate report data - plots and text
+def generate_report_data(csv_file, prodtest_name, control_group, test_group):
+    plots = list()
     summary = {}
-    enable_instance_report = config_parser.get('data', 'enable_instance_report') == 1
-    with PdfPages(output_file) as pdf:
-        # Loop through the columns and test each
-        columns = list(csv_file.columns.values)
-        start_from_column = 2 #skip tslice and adserver_host
-        for i in range(start_from_column, len(columns)) :
-            column_name = columns[i]
+    enable_instance_report = config_parser.getboolean('data', 'enable_instance_report') == True
+    columns = list(csv_file.columns.values)
+    start_from_column = 2 #skip tslice and adserver_host
+
+    # Loop through the columns and create plots and test for each
+    for i in range(start_from_column, len(columns)) :
+        column_name = columns[i]
+
+        control_data = control_group[column_name]
+        test_data = test_group[column_name]
+
+        logger.info("Checking distribution type for {}".format(column_name))
+        is_norm = is_normal_distribution(control_data) and is_normal_distribution(test_data)
+        is_ok, test_info = do_test(control_data, test_data, is_norm)
+        summary[column_name] = "OK!" if is_ok else "NOT OK!"
+        plots.append(create_report_text(column_name, test_info))
+
+        logger.info("Creating box plot for {}".format(column_name))
+        plots.append(create_boxplot(column_name, control_data, test_data))
+
+        logger.info("Creating distribution plot for {}".format(column_name))
+        plots.append(create_distribution_plot(column_name, control_data, test_data))
+
+        if enable_instance_report:
             logger.info("Creating AdServer activity plot for {}".format(column_name))
+            plots.append(create_instance_behaviour_plot(column_name, CONTROL, control_group))
+            plots.append(create_instance_behaviour_plot(column_name, TEST, test_group))
 
-            if enable_instance_report:
-                figures.append(create_instance_behaviour_plot(pdf, column_name, CONTROL, control_group))
-                figures.append(create_instance_behaviour_plot(pdf, column_name, TEST, test_group))
+        logger.info('\n ================== \n')
 
-            control_data = control_group[column_name]
-            test_data = test_group[column_name]
+    summary_fig = create_report_summary(prodtest_name, summary)
+    return summary_fig, plots
 
-            logger.info("Creating distribution plot for {}".format(column_name))
-            figures.append(create_distribution_plot(pdf, column_name, control_data, test_data))
-
-            logger.info("Checking distribution type for {}".format(column_name))
-            is_norm = is_normal_distribution(control_data) and is_normal_distribution(test_data)
-            is_ok, test_info = do_test(control_data, test_data, is_norm)
-            summary[column_name] = "OK!"
-            figures.append(create_report_text(pdf, column_name, test_info))
-
-            logger.info("Creating box plot for {}".format(column_name))
-            figures.append(create_boxplot(pdf, column_name, control_data, test_data))
-            logger.info('\n ================== \n')
-
-        logger.info("Generating Report...")
-        #Generate summary first
-        summary_fig = create_report_summary(pdf, prodtest_name, summary)
-        pdf.savefig(summary_fig)
-        # Add all figures
-        for fig in figures :
-            pdf.savefig(fig)
-
-    logger.info("Finished.")
-
-# Generate the A/B test report in HTML format
-def generate_html_report(control_group, test_group):
-    logger.info("html report")
 
 # Generate a report containing the plots and additional info about the A/B test
 def generate_report(csv_file, control_group, test_group):
     output_type = config_parser.get('data', 'output_type')
     prodtest_name = config_parser.get('data', 'prodtest_name')
     output_dir = config_parser.get('data', 'output_dir')
+
+    summary_fig, plots = generate_report_data(csv_file, prodtest_name, control_group, test_group)
+
     if (output_type == 'pdf'):
+        logger.info("Generating PDF Report...")
         output_file = output_dir + prodtest_name + ".pdf"
-        generate_pdf_report(csv_file, prodtest_name, output_file, control_group, test_group)
+        with PdfPages(output_file) as pdf:
+             #Add summary first
+            pdf.savefig(summary_fig)
+            # Add all figures
+            for p in plots :
+                pdf.savefig(p)
+
     elif (output_type == 'html'):
+        logger.info("Generating HTML Report...")
+        tmp_html_dir = output_dir + prodtest_name + "_html/"
+        if not os.path.exists(tmp_html_dir):
+            os.makedirs(tmp_html_dir)
+
         output_file = output_dir + prodtest_name + ".html"
-        generate_html_report(control_group, test_group)
+        html = '<html>'
+        #Add summary first
+        summary_fig.savefig(tmp_html_dir + "summary.png")
+        html += "<img src=\"{}\"><br>".format(tmp_html_dir + "summary.png")
+        i = 1
+        for p in plots :
+            fig_path = "{}{}.{}".format(tmp_html_dir, i, "png")
+            p.savefig(fig_path)
+            html += "<img src=\"{}\"><br>".format(fig_path)
+            i = i+1
+
+        html += '</html>'
+        html_file= open(output_file,"w")
+        html_file.write(html)
+        html_file.close()
+
     else:
         raise Exception('Unsupported output file type for test report: ' + output_type)
+
 
 
 if __name__ == "__main__":
